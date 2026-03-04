@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import requests
 from github import Github, Auth
 
@@ -16,6 +17,7 @@ repo = gh.get_repo(repo_name)
 diff_text = ""
 event_context = ""
 author_login = ""
+trigger_labels = []
 
 if event_name == "push":
     commit_sha = os.environ.get("COMMIT_SHA")
@@ -26,6 +28,7 @@ if event_name == "push":
     if author_login != allowed_user:
         exit(0)
     event_context = f"Commit Message: {commit.commit.message}"
+    trigger_labels = [m.lower() for m in re.findall(r'\[(.*?)\]', commit.commit.message)]
     for file in commit.files:
         diff_text += f"File: {file.filename}\nPatch:\n{file.patch}\n\n"
         if len(diff_text) > 100000:
@@ -38,6 +41,7 @@ elif event_name == "pull_request":
     if author_login != allowed_user:
         exit(0)
     event_context = f"PR Title: {pr.title}\nPR Body: {pr.body}"
+    trigger_labels = [label.name.lower() for label in pr.labels]
     for file in pr.get_files():
         diff_text += f"File: {file.filename}\nPatch:\n{file.patch}\n\n"
         if len(diff_text) > 100000:
@@ -46,28 +50,62 @@ elif event_name == "pull_request":
 else:
     exit(0)
 
-prompt = f"""
-Analyze the following code changes and create a detailed description for a GitHub Issue.
-IMPORTANT: The issue_title and issue_body MUST be written entirely in English.
-
-Context:
-{event_context}
-
-Code Changes:
-{diff_text}
-
-Instructions:
-1. Create a clear issue title and body explaining the changes or implementation details in English.
-2. Choose the most appropriate labels from: ["bug", "documentation", "duplicate", "enhancement", "good first issue", "help wanted", "invalid", "question", "wontfix"].
-3. SECURITY REVIEW: Carefully analyze the code changes for any potential security vulnerabilities (e.g., injection flaws, hardcoded secrets, XSS, insecure data handling).
-   - If you find a potential vulnerability, add a section "### Security Warning" at the end of the `issue_body` describing the risk and how to fix it in English.
-   - Also, if a vulnerability is found, add the label "security" to the `labels` list.
-
+base_instructions = """
 Return only a raw JSON object with no markdown formatting. The JSON must contain these exact keys:
 "issue_title": string,
 "issue_body": string,
 "labels": list of strings
+The issue_title and issue_body MUST be written entirely in English. Choose appropriate standard GitHub labels for the 'labels' list.
 """
+
+if any(l in trigger_labels for l in ["sec", "security", "audit"]):
+    prompt = f"""
+    Act as a Strict Security Auditor. Perform a deep security audit on the following code changes based on OWASP Top 10.
+    Context: {event_context}
+    Changes: {diff_text}
+    Instructions: Look for injection flaws, XSS, hardcoded secrets, and insecure data handling. Create a critical vulnerability report in the issue_body detailing the exact lines and how to patch them.
+    {base_instructions}
+    """
+elif any(l in trigger_labels for l in ["review", "refactor", "code-review"]):
+    prompt = f"""
+    Act as a Strict Code Reviewer. Analyze the following code changes focusing on code quality, SOLID principles, DRY, and architecture.
+    Context: {event_context}
+    Changes: {diff_text}
+    Instructions: Identify code smells, bad naming conventions, or redundant logic. Create an issue with concrete refactoring improvements and code snippets showing the better approach.
+    {base_instructions}
+    """
+elif any(l in trigger_labels for l in ["qa", "test", "testing"]):
+    prompt = f"""
+    Act as a QA Engineer. Analyze the following code changes to identify edge cases and potential points of failure.
+    Context: {event_context}
+    Changes: {diff_text}
+    Instructions: Generate ready-to-use unit test code blocks and a bulleted checklist for manual testing inside the issue_body.
+    {base_instructions}
+    """
+elif any(l in trigger_labels for l in ["perf", "performance", "optimize"]):
+    prompt = f"""
+    Act as a Performance Expert. Analyze the following code changes for performance bottlenecks, time/space complexity, and resource leaks.
+    Context: {event_context}
+    Changes: {diff_text}
+    Instructions: Identify slow loops, redundant database calls, or high memory usage. Provide algorithmic optimizations in the issue_body.
+    {base_instructions}
+    """
+elif any(l in trigger_labels for l in ["pm", "release", "product"]):
+    prompt = f"""
+    Act as a Product Manager. Analyze the following code changes and generate user-facing Release Notes.
+    Context: {event_context}
+    Changes: {diff_text}
+    Instructions: Translate technical code changes into business value and clear user benefits. Format the issue_body as a public changelog.
+    {base_instructions}
+    """
+else:
+    prompt = f"""
+    Analyze the following code changes and create a standard documentation issue.
+    Context: {event_context}
+    Changes: {diff_text}
+    Instructions: Create a clear description of what was changed. Add a "### Security Warning" section at the end ONLY if you spot an obvious security flaw.
+    {base_instructions}
+    """
 
 model_name = "gemini-2.5-flash"
 api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
