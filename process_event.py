@@ -8,7 +8,7 @@ gh_token = os.environ.get("GITHUB_TOKEN")
 gemini_key = os.environ.get("GEMINI_API_KEY")
 repo_name = os.environ.get("REPOSITORY")
 event_name = os.environ.get("EVENT_NAME")
-allowed_user = os.environ.get("ALLOWED_USER").strip().lower()
+allowed_users = [u.strip().lower() for u in os.environ.get("ALLOWED_USER", "").split(",")]
 
 auth = Auth.Token(gh_token)
 gh = Github(auth=auth)
@@ -25,7 +25,7 @@ if event_name == "push":
     if not commit.author:
         exit(0)
     author_login = commit.author.login.strip().lower()
-    if author_login != allowed_user:
+    if author_login not in allowed_users:
         exit(0)
     event_context = f"Commit Message: {commit.commit.message}"
     trigger_labels = [m.lower() for m in re.findall(r'\[(.*?)\]', commit.commit.message)]
@@ -38,7 +38,7 @@ elif event_name == "pull_request":
     pr_number = int(os.environ.get("PR_NUMBER"))
     pr = repo.get_pull(pr_number)
     author_login = pr.user.login.strip().lower()
-    if author_login != allowed_user:
+    if author_login not in allowed_users:
         exit(0)
     event_context = f"PR Title: {pr.title}\nPR Body: {pr.body}"
     trigger_labels = [label.name.lower() for label in pr.labels]
