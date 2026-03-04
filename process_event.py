@@ -34,7 +34,7 @@ if event_name == "push":
     trigger_labels = [m.lower() for m in re.findall(r'\[(.*?)\]', commit.commit.message)]
     for file in commit.files:
         diff_text += f"File: {file.filename}\nPatch:\n{file.patch}\n\n"
-        if len(diff_text) > 80000:
+        if len(diff_text) > 10000:
             diff_text += "\n[Diff truncated...]"
             break
 elif event_name == "pull_request":
@@ -97,9 +97,9 @@ raw_content = re.sub(r'^```json\s*|```$', '', raw_content, flags=re.MULTILINE).s
 result = json.loads(raw_content)
 
 if event_name == "push":
-    footer = f"\n\n---\n*Generated automatically from commit {os.environ.get('COMMIT_SHA')[:7]} using {MODEL_NAME}*"
+    footer = f"\n\n---\n*Generated automatically from commit {os.environ.get('COMMIT_SHA')[:7]}*"
 else:
-    footer = f"\n\n---\n*Generated automatically from PR #{os.environ.get('PR_NUMBER')} using {MODEL_NAME}*"
+    footer = f"\n\n---\n*Generated automatically from PR #{os.environ.get('PR_NUMBER')}*"
 
 repo.create_issue(
     title=result['issue_title'],
